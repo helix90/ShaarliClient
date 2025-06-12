@@ -25,7 +25,7 @@ class ShaarliClient:
     A client for interacting with Shaarli using Selenium WebDriver.
     """
     
-    def __init__(self, base_url: str, headless: bool = True, timeout: int = 10):
+    def __init__(self, base_url: str, headless: bool = True, timeout: int = 10, debug: bool = False):
         """
         Initialize the Shaarli client.
         
@@ -33,11 +33,18 @@ class ShaarliClient:
             base_url: Base URL of the Shaarli instance (e.g., 'https://your-shaarli.com')
             headless: Whether to run browser in headless mode
             timeout: Default timeout for web operations in seconds
+            debug: Whether to enable debug level logging
         """
         self.base_url = base_url.rstrip('/')
         self.timeout = timeout
         self.driver = None
         self.is_logged_in = False
+        
+        # Configure logging level
+        if debug:
+            logger.setLevel(logging.DEBUG)
+        else:
+            logger.setLevel(logging.INFO)
         
         # Set up Firefox options
         self.firefox_options = Options()
@@ -216,7 +223,7 @@ class ShaarliClient:
 
     def login(self, username: str, password: str) -> bool:
         """
-        Log in to Shaarli.
+        Log in to Shaarli using JavaScript-based interaction.
         
         Args:
             username: Shaarli username
@@ -237,12 +244,6 @@ class ShaarliClient:
             # Wait for page to fully load
             self.wait_for_page_ready()
             
-            # Check for iframes
-            iframes = self.check_for_iframes()
-            
-            logger.info("Debugging page elements...")
-            self.debug_page_elements()
-            
             # Wait for login form to load
             wait = WebDriverWait(self.driver, self.timeout)
             
@@ -254,10 +255,8 @@ class ShaarliClient:
                 logger.error("No input elements found on page - page may not have loaded")
                 return False
             
-            # Try multiple approaches to find username field
+            # Find username field using common selectors
             username_field = None
-            
-            # Approach 1: Try common selectors
             username_selectors = [
                 (By.NAME, "login"),
                 (By.NAME, "username"),
@@ -268,103 +267,31 @@ class ShaarliClient:
                 (By.CSS_SELECTOR, "input[name='login']"),
                 (By.CSS_SELECTOR, "input[name='username']"),
                 (By.CSS_SELECTOR, "input[type='text']"),
-                (By.CSS_SELECTOR, "input[type='email']"),
-                (By.XPATH, "//input[@name='login']"),
-                (By.XPATH, "//input[@name='username']"),
-                (By.XPATH, "//input[@type='text']"),
-                (By.XPATH, "//input[contains(@placeholder, 'user')]"),
-                (By.XPATH, "//input[contains(@placeholder, 'login')]"),
-                (By.XPATH, "//input[contains(@class, 'user')]"),
-                (By.XPATH, "//input[contains(@class, 'login')]")
+                (By.CSS_SELECTOR, "input[type='email']")
             ]
             
             for selector_type, selector_value in username_selectors:
                 try:
                     elements = self.driver.find_elements(selector_type, selector_value)
                     if elements:
-                        username_field = elements[0]  # Take the first match
+                        username_field = elements[0]
                         logger.info(f"Found username field using {selector_type}: {selector_value}")
                         break
                 except Exception as e:
                     logger.debug(f"Selector {selector_type}:{selector_value} failed: {e}")
                     continue
             
-            # Approach 2: If still not found, try to find the first text input in a form
-            if not username_field:
-                logger.info("Trying to find first text input in a form...")
-                try:
-                    forms = self.driver.find_elements(By.TAG_NAME, "form")
-                    for form in forms:
-                        text_inputs = form.find_elements(By.CSS_SELECTOR, "input[type='text'], input:not([type])")
-                        if text_inputs:
-                            username_field = text_inputs[0]
-                            logger.info("Found username field as first text input in form")
-                            break
-                except Exception as e:
-                    logger.debug(f"Form-based search failed: {e}")
-            
-            # Approach 3: Find any input that's not password type
-            if not username_field:
-                logger.info("Trying to find any non-password input...")
-                try:
-                    all_inputs = self.driver.find_elements(By.TAG_NAME, "input")
-                    for inp in all_inputs:
-                        input_type = inp.get_attribute("type")
-                        if input_type not in ["password", "submit", "button", "hidden"]:
-                            username_field = inp
-                            logger.info(f"Found potential username field with type: {input_type}")
-                            break
-                except Exception as e:
-                    logger.debug(f"Generic input search failed: {e}")
-
-                    
             if not username_field:
                 logger.error("Could not find username field")
-                # If we found iframes, try searching in them
-                if iframes:
-                    logger.info("Searching for username field in iframes...")
-                    for i, iframe in enumerate(iframes):
-                        try:
-                            self.driver.switch_to.frame(iframe)
-                            self.debug_page_elements()
-                            
-                            # Try to find username field in iframe
-                            for selector_type, selector_value in username_selectors[:5]:  # Try first 5 selectors
-                                try:
-                                    elements = self.driver.find_elements(selector_type, selector_value)
-                                    if elements:
-                                        username_field = elements[0]
-                                        logger.info(f"Found username field in iframe {i} using {selector_type}: {selector_value}")
-                                        break
-                                except:
-                                    continue
-                            
-                            if username_field:
-                                break
-                                
-                            self.driver.switch_to.default_content()
-                        except Exception as e:
-                            logger.warning(f"Error checking iframe {i}: {e}")
-                            self.driver.switch_to.default_content()
-                
-                if not username_field:
-                    return False
-            
-            # Scroll to username field and interact using robust method
-            logger.info("Attempting to interact with username field...")
-            if not self.try_interact_with_element(username_field, "send_keys", username):
-                logger.error("Failed to enter username")
                 return False
             
-            # Try multiple selectors for password field
+            # Find password field using common selectors
             password_field = None
             password_selectors = [
                 (By.NAME, "password"),
                 (By.ID, "password"),
                 (By.CSS_SELECTOR, "input[name='password']"),
-                (By.CSS_SELECTOR, "input[type='password']"),
-                (By.XPATH, "//input[@name='password']"),
-                (By.XPATH, "//input[@type='password']")
+                (By.CSS_SELECTOR, "input[type='password']")
             ]
             
             for selector_type, selector_value in password_selectors:
@@ -378,87 +305,66 @@ class ShaarliClient:
                     logger.debug(f"Password selector failed: {e}")
                     continue
             
-            # If still no password field, try to find any password type input
-            if not password_field:
-                try:
-                    password_inputs = self.driver.find_elements(By.CSS_SELECTOR, "input[type='password']")
-                    if password_inputs:
-                        password_field = password_inputs[0]
-                        logger.info("Found password field by type")
-                except Exception as e:
-                    logger.debug(f"Generic password search failed: {e}")
-                    
             if not password_field:
                 logger.error("Could not find password field")
                 return False
+            
+            # Use JavaScript to interact with form fields
+            try:
+                # Set username
+                self.driver.execute_script("arguments[0].value = '';", username_field)
+                self.driver.execute_script("arguments[0].value = arguments[1];", username_field, username)
+                self.driver.execute_script("arguments[0].dispatchEvent(new Event('input', {bubbles: true}));", username_field)
+                self.driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles: true}));", username_field)
                 
-            # Scroll to password field and interact using robust method
-            logger.info("Attempting to interact with password field...")
-            if not self.try_interact_with_element(password_field, "send_keys", password):
-                logger.error("Failed to enter password")
-                return False
-            
-            # Try multiple selectors for submit button
-            submit_button = None
-            submit_selectors = [
-                (By.CSS_SELECTOR, "input[type='submit']"),
-                (By.CSS_SELECTOR, "button[type='submit']"),
-                (By.CSS_SELECTOR, "input[value*='Login']"),
-                (By.CSS_SELECTOR, "input[value*='login']"),
-                (By.CSS_SELECTOR, "input[value*='Log in']"),
-                (By.CSS_SELECTOR, "button"),
-                (By.XPATH, "//input[@type='submit']"),
-                (By.XPATH, "//button[@type='submit']"),
-                (By.XPATH, "//input[contains(@value, 'Login')]"),
-                (By.XPATH, "//button[contains(text(), 'Login')]")
-            ]
-            
-            for selector_type, selector_value in submit_selectors:
-                try:
-                    submit_elements = self.driver.find_elements(selector_type, selector_value)
-                    if submit_elements:
-                        submit_button = submit_elements[0]
-                        logger.info(f"Found submit button using {selector_type}: {selector_value}")
-                        break
-                except Exception as e:
-                    logger.debug(f"Submit selector failed: {e}")
-                    continue
-                    
-            if not submit_button:
-                logger.error("Could not find submit button")
-                # Try submitting the form using Enter key
-                try:
-                    if password_field:
-                        password_field.send_keys("\n")
-                        logger.info("Submitted form using Enter key")
-                    else:
-                        return False
-                except:
-                    return False
-            else:
-                # Submit using robust interaction method
-                logger.info("Attempting to click submit button...")
-                if not self.try_interact_with_element(submit_button, "click"):
-                    logger.error("Failed to click submit button")
-                    # Try Enter key as fallback
+                # Set password
+                self.driver.execute_script("arguments[0].value = '';", password_field)
+                self.driver.execute_script("arguments[0].value = arguments[1];", password_field, password)
+                self.driver.execute_script("arguments[0].dispatchEvent(new Event('input', {bubbles: true}));", password_field)
+                self.driver.execute_script("arguments[0].dispatchEvent(new Event('change', {bubbles: true}));", password_field)
+                
+                # Find and click submit button
+                submit_selectors = [
+                    (By.CSS_SELECTOR, "input[type='submit']"),
+                    (By.CSS_SELECTOR, "button[type='submit']"),
+                    (By.CSS_SELECTOR, "input[value*='Login']"),
+                    (By.CSS_SELECTOR, "button")
+                ]
+                
+                submit_button = None
+                for selector_type, selector_value in submit_selectors:
                     try:
-                        if password_field:
-                            password_field.send_keys("\n")
-                            logger.info("Submitted form using Enter key as fallback")
-                    except:
-                        return False
-            
-            # Wait for redirect and check if login was successful
-            time.sleep(3)
-            
-            # Check if we're redirected to the main page or if there's an error
-            current_url = self.driver.current_url
-            if "login" not in current_url or self._is_logged_in():
-                self.is_logged_in = True
-                logger.info("Login successful")
-                return True
-            else:
-                logger.error("Login failed - still on login page")
+                        submit_elements = self.driver.find_elements(selector_type, selector_value)
+                        if submit_elements:
+                            submit_button = submit_elements[0]
+                            logger.info(f"Found submit button using {selector_type}: {selector_value}")
+                            break
+                    except Exception as e:
+                        logger.debug(f"Submit selector failed: {e}")
+                        continue
+                
+                if submit_button:
+                    # Click submit using JavaScript
+                    self.driver.execute_script("arguments[0].click();", submit_button)
+                else:
+                    # Try submitting form using Enter key on password field
+                    self.driver.execute_script("arguments[0].dispatchEvent(new KeyboardEvent('keydown', {'key': 'Enter'}));", password_field)
+                
+                # Wait for redirect and check if login was successful
+                time.sleep(3)
+                
+                # Check if we're redirected to the main page or if there's an error
+                current_url = self.driver.current_url
+                if "login" not in current_url or self._is_logged_in():
+                    self.is_logged_in = True
+                    logger.info("Login successful")
+                    return True
+                else:
+                    logger.error("Login failed - still on login page")
+                    return False
+                    
+            except Exception as e:
+                logger.error(f"JavaScript interaction failed: {e}")
                 return False
                 
         except TimeoutException:
@@ -988,8 +894,8 @@ def main():
     description = "This is an example website"
     tags = "example web demo"
     
-    # Use the client
-    with ShaarliClient(SHAARLI_URL, headless=True) as client:
+    # Use the client with debug logging disabled by default
+    with ShaarliClient(SHAARLI_URL, headless=True, debug=False) as client:
         # Log in
         if client.login(USERNAME, PASSWORD):
             print("Successfully logged in!")
